@@ -1,0 +1,6 @@
+__pycache__/
+*.pyc
+x_cookies.json
+output.json
+*.log
+.env
