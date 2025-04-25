@@ -22,6 +22,7 @@ Clone the repository and install the required dependencies:
 ```bash
 git clone https://github.com/0Day3xpl0it/zenscraper.git
 cd zenscraper
+chmod +x *.py
 pip install -r requirements.txt
 playwright install
 ```
