@@ -217,7 +217,7 @@ if __name__ == "__main__":
     print(f"[+] Collected {len(tweets)} tweets")
     try:
         with open(cfg.output, "w", encoding="utf-8") as f:
-            json.dump(tweets, f, indent=2)
+            json.dump(tweets, f, indent=2, ensure_ascii=False)
         print(f"[+] Saved to {cfg.output}")
     except Exception as e:
         print(f"[!] Failed to save file: {e}")
