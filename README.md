@@ -7,7 +7,7 @@ ZenScraper is an asynchronous scraper built with PlayWright and json designed fo
 - **Flexible Scraping:** Choose to scrape original tweets, retweets, or both.
 - **Date Filtering:** Filter tweets based on specific date ranges (`--since-after`, `--before`).
 - **Session Authentication:** Uses cookies for authenticated scraping sessions.
-- **Configurable Output:** Outputs scraped data to JSON format with structured metadata.
+- **Configurable Output:** Outputs scraped data to JSON format with structured metadata or a cleaned text format.
 - **Headless or Visible Mode:** Operate in headless mode for automation or visible mode for debugging.
 
 ## Requirements
@@ -59,7 +59,7 @@ This command collects up to 200 original tweets from January 2025, saving the ou
 | --------------- | -------------------------------------------- | ------------------- |
 | `--username`    | **(Required)** X.com username to scrape      | -                   |
 | `--type`        | Content type: `tweets`, `retweets`, or `all` | `all`               |
-| `--output`      | Output file (.json)                          | `<username>.json`   |
+| `--output`      | Output file (.json or .txt)                  | `<username>.json`   |
 | `--since-after` | Include tweets after this date (ISO 8601)    | None                |
 | `--before`      | Include tweets before this date (ISO 8601)   | None                |
 | `--scrolls`     | Number of scroll actions                     | 30                  |
