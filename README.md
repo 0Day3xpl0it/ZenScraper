@@ -65,6 +65,7 @@ This command collects up to 200 original tweets from January 2025, saving the ou
 | `--scrolls`     | Number of scroll actions                     | 30                  |
 | `--max`         | Maximum tweets to retrieve                   | 50                  |
 | `--no-headless` | Display browser during scraping              | Headless by default |
+| `--delay`       | Add delay for throttling                     | 2                   | |
 
 ## TODO
 
@@ -75,6 +76,7 @@ This command collects up to 200 original tweets from January 2025, saving the ou
 
 - A valid `x_cookies.json` file is required for authenticated scraping.
 - Include multiple user-agent strings in `user_agents.txt` for request rotation.
+- Date options do not currently work with retweets as the X search function doesn't show retweets.
 - The scraper leverages asynchronous Playwright operations for optimal speed and efficiency.
 - It is recommended to use a backup X account to perform scraping activities to prevent issues. 
 
