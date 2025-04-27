@@ -63,13 +63,17 @@ def format_tweets_as_text(tweets):
     output = []
     for tweet in tweets:
         reply_info = "None"
-        if tweet["in_reply_to_screen_name"]:
+        if tweet.get("in_reply_to_screen_name"):
             reply_info = f"@{tweet['in_reply_to_screen_name']} (User ID: {tweet['in_reply_to_user_id']}, Status ID: {tweet['in_reply_to_status_id']})"
+        media_info = "None"
+        if tweet.get("media"):
+            media_info = "\n".join([f"{m['type'].capitalize()}: {m['url']}" for m in tweet["media"]])
         tweet_text = (
             f"Tweet ID: {tweet['id']}\n"
             f"Text: {tweet['text']}\n"
             f"Created At: {tweet['created_at']}\n"
             f"In Reply To: {reply_info}\n"
+            f"Media: {media_info}\n"
             f"----------------------------------------"
         )
         output.append(tweet_text)
@@ -82,7 +86,6 @@ async def scrape_user_tweets(cfg):
     cursor = None
 
     async with async_playwright() as p:
-        # Launch a Chromium browser instance
         browser = await p.chromium.launch(headless=cfg.headless)
         context = await browser.new_context(
             user_agent=get_random_user_agent(),
@@ -90,28 +93,29 @@ async def scrape_user_tweets(cfg):
             viewport={"width": 1280, "height": 800}
         )
 
-        # Try to load session cookies if available
+        # Load cookies with improved error handling
         try:
-            cookie_data = json.load(open(COOKIE_PATH))
-            await context.add_cookies(cookie_data["cookies"])
-            print("[DEBUG] Cookies loaded")
+            with open(COOKIE_PATH) as f:
+                cookie_data = json.load(f)
+            cookies = cookie_data.get("cookies", cookie_data)
+            if not isinstance(cookies, list):
+                raise ValueError("Cookies must be a list")
+            await context.add_cookies(cookies)
+            print("[DEBUG] Cookies loaded:", [c["name"] for c in cookies])
         except Exception as e:
             print(f"[!] Failed to load cookies: {e}")
+            sys.exit(1)
 
         page = await context.new_page()
 
-        # Set up a response handler to parse data from API responses
         async def handle_response(response):
             nonlocal cursor, tweets, seen_ids
-            # Handle both UserTweets (profile) and SearchTimeline (search) endpoints
             if "UserTweets" in response.url or "SearchTimeline" in response.url:
-                print(f"[DEBUG] Response received for {'UserTweets' if 'UserTweets' in response.url else 'SearchTimeline'}")
+                print(f"[DEBUG] Response for {'UserTweets' if 'UserTweets' in response.url else 'SearchTimeline'}")
                 try:
                     data = await response.json()
-                    # Extract instructions based on the response type
                     instructions = []
                     if "UserTweets" in response.url:
-                        # Try multiple paths for UserTweets
                         user_result = data.get("data", {}).get("user", {}).get("result", {})
                         possible_paths = [
                             user_result.get("timeline_v2", {}).get("timeline", {}).get("instructions"),
@@ -123,10 +127,9 @@ async def scrape_user_tweets(cfg):
                                 instructions = path
                                 break
                     else:
-                        # SearchTimeline path
                         instructions = data.get("data", {}).get("search_by_raw_query", {}).get("search_timeline", {}).get("timeline", {}).get("instructions", [])
 
-                    print(f"[DEBUG] Found {len(instructions)} instruction blocks")
+                    print(f"[DEBUG] Found {len(instructions)} instructions")
 
                     for item in instructions:
                         for entry in item.get("entries", []):
@@ -149,14 +152,12 @@ async def scrape_user_tweets(cfg):
                                     except:
                                         dt = None
 
-                                # Filter tweets by provided date range
                                 if dt:
                                     if cfg.since_after and dt < cfg.since_after:
                                         continue
                                     if cfg.before and dt >= cfg.before:
                                         continue
 
-                                # Skip tweets depending on --type setting
                                 is_rt = full_text.strip().startswith("RT @")
                                 is_rep = full_text.strip().startswith("@")
                                 if cfg.type == "tweets" and (is_rt or is_rep):
@@ -164,26 +165,67 @@ async def scrape_user_tweets(cfg):
                                 if cfg.type == "retweets" and not is_rt:
                                     continue
 
-                                # If tweet appears shortened, try hydrating it
                                 if full_text.strip().endswith("…"):
                                     hydrated = await hydrate_full_text(tweet_id, page)
                                     if hydrated:
                                         print(f"[DEBUG] Hydrated full text for {tweet_id}")
                                         full_text = hydrated
 
-                                # Extract reply information
-                                in_reply_to_screen_name = legacy.get("in_reply_to_screen_name")
-                                in_reply_to_user_id = legacy.get("in_reply_to_user_id_str")
-                                in_reply_to_status_id = legacy.get("in_reply_to_status_id_str")
+                                # Extract media from legacy.entities.media and extended_entities
+                                media = []
+                                for entities_key in ["entities", "extended_entities"]:
+                                    for m in legacy.get(entities_key, {}).get("media", []):
+                                        if m["type"] == "photo":
+                                            media.append({"type": "image", "url": m["media_url_https"]})
+                                        elif m["type"] == "video" or m["type"] == "animated_gif":
+                                            variants = m.get("video_info", {}).get("variants", [])
+                                            best_variant = max(
+                                                variants,
+                                                key=lambda v: v.get("bitrate", 0),
+                                                default={}
+                                            )
+                                            if best_variant.get("url"):
+                                                media.append({"type": "video", "url": best_variant["url"]})
 
-                                tweets.append({
+                                # Prepare tweet data with only non-empty/non-zero fields
+                                tweet_data = {
                                     "id": tweet_id,
                                     "text": full_text,
-                                    "created_at": created_at,
-                                    "in_reply_to_screen_name": in_reply_to_screen_name,
-                                    "in_reply_to_user_id": in_reply_to_user_id,
-                                    "in_reply_to_status_id": in_reply_to_status_id
-                                })
+                                    "created_at": created_at
+                                }
+
+                                # Numeric fields: include only if non-zero
+                                if legacy.get("favorite_count", 0) > 0:
+                                    tweet_data["likes"] = legacy.get("favorite_count", 0)
+                                if legacy.get("retweet_count", 0) > 0:
+                                    tweet_data["retweets"] = legacy.get("retweet_count", 0)
+                                if legacy.get("bookmark_count", 0) > 0:
+                                    tweet_data["bookmarks"] = legacy.get("bookmark_count", 0)
+                                if legacy.get("reply_count", 0) > 0:
+                                    tweet_data["replies"] = legacy.get("reply_count", 0)
+
+                                # String fields: include only if non-empty
+                                if legacy.get("source", ""):
+                                    tweet_data["source"] = legacy.get("source", "")
+
+                                # List fields: include only if non-empty
+                                mentions = [m["screen_name"] for m in legacy.get("entities", {}).get("user_mentions", [])]
+                                if mentions:
+                                    tweet_data["mentions"] = mentions
+
+                                urls = [u["expanded_url"] for u in legacy.get("entities", {}).get("urls", [])]
+                                if urls:
+                                    tweet_data["urls"] = urls
+
+                                hashtags = [h["text"] for h in legacy.get("entities", {}).get("hashtags", [])]
+                                if hashtags:
+                                    tweet_data["hashtags"] = hashtags
+
+                                # Include media only if present
+                                if media:
+                                    tweet_data["media"] = media
+
+                                tweets.append(tweet_data)
                                 seen_ids.add(tweet_id)
                                 if len(tweets) >= cfg.max:
                                     return
@@ -196,7 +238,6 @@ async def scrape_user_tweets(cfg):
 
         page.on("response", handle_response)
 
-        # Check if date filters are provided
         if cfg.since_after or cfg.before:
             query_parts = [f"from:{cfg.username}"]
             if cfg.since_after:
@@ -209,29 +250,27 @@ async def scrape_user_tweets(cfg):
             encoded_query = urllib.parse.quote(query)
             search_url = f"https://x.com/search?q={encoded_query}&src=typed_query"
             await page.goto(search_url, timeout=60000)
-            print(f"[DEBUG] Navigated to search page: {search_url}")
-            # Switch to the "Latest" tab
+            print(f"[DEBUG] Navigated to search: {search_url}")
             await page.click('text=Latest')
-            print("[DEBUG] Clicked on Latest tab")
-            await page.wait_for_timeout(2000)  # Wait for the tab switch to load
+            print("[DEBUG] Clicked Latest tab")
+            await page.wait_for_timeout(2000)
         else:
-            # Navigate to the user profile as before
             await page.goto(f"https://x.com/{cfg.username}", timeout=60000)
             print(f"[DEBUG] Navigated to https://x.com/{cfg.username}")
             await page.wait_for_timeout(3000)
 
-        # Simulate scrolling to load more tweets
+        min_load_time = 2.0
         for i in range(cfg.scrolls):
             print(f"[DEBUG] Scroll {i+1}")
             if len(tweets) >= cfg.max or not cursor:
                 break
-            await page.evaluate("() => window.scrollTo(0, document.body.scrollHeight);")
             await page.wait_for_timeout(2000)
+            await page.evaluate("() => window.scrollTo(0, document.body.scrollHeight);")
+            await asyncio.sleep(max(min_load_time, cfg.delay))
 
         await browser.close()
         return tweets[:cfg.max]
 
-# Script entry point when run from the command line
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Scrape tweets from a user profile or search on X.com")
     parser.add_argument("--username", help="USERNAME", required=True, metavar='')
@@ -242,9 +281,9 @@ if __name__ == "__main__":
     parser.add_argument("--no-headless", help="shows browser", dest="headless", action="store_false")
     parser.add_argument("--scrolls", help="default 30 scrolls", type=int, default=30, metavar='')
     parser.add_argument("--max", help="default 50 tweets", type=int, default=50, metavar='')
+    parser.add_argument("--delay", help="delay between scrolls in seconds (default: 2)", type=float, default=2.0, metavar='')
     args = parser.parse_args()
 
-    # Convert parsed args into config object
     class Config: pass
     cfg = Config()
     cfg.username = args.username
@@ -254,9 +293,9 @@ if __name__ == "__main__":
     cfg.scrolls = args.scrolls
     cfg.max = args.max
     cfg.since_after = None
+    cfg.delay = args.delay
     cfg.before = None
 
-    # Validate and parse optional date filters
     if args.since_after:
         try:
             cfg.since_after = datetime.fromisoformat(args.since_after).replace(tzinfo=timezone.utc)
@@ -270,10 +309,8 @@ if __name__ == "__main__":
             print("[!] Invalid --before format")
             sys.exit(1)
 
-    # Run the scraping coroutine
     tweets = asyncio.run(scrape_user_tweets(cfg))
 
-    # Save the results to file
     print(f"[+] Collected {len(tweets)} tweets")
     try:
         with open(cfg.output, "w", encoding="utf-8") as f:
