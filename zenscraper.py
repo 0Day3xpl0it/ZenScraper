@@ -13,11 +13,9 @@ from playwright.async_api import async_playwright
 
 print("\nZenScraper created by 0Day3xpl0it\n")
 
-# Define file paths for user agents and cookies
 UA_PATH = Path("user_agents.txt")
 COOKIE_PATH = Path("x_cookies.json")
 
-# Load a random user-agent string from file to simulate different browsers
 def get_random_user_agent(file_path="user_agents.txt"):
     try:
         lines = Path(file_path).read_text(encoding="utf-8").splitlines()
@@ -25,13 +23,12 @@ def get_random_user_agent(file_path="user_agents.txt"):
     except Exception:
         return "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 Chrome/120.0.0.0 Safari/537.36"
 
-# Select a random language header to mimic different user locales
 def get_random_lang():
     langs = ["en-US,en;q=0.9", "en-GB,en;q=0.8", "en;q=0.7"]
     return random.choice(langs)
 
-# Try to retrieve the full tweet text if it's truncated on initial load
-async def hydrate_full_text(tweet_id, page):
+# Full hydration to recover missing fields (likes, retweets, etc)
+async def hydrate_full_tweet(tweet_id, page):
     try:
         variables = {
             "focalTweetId": tweet_id,
@@ -51,35 +48,62 @@ async def hydrate_full_text(tweet_id, page):
         for instr in instrs:
             for entry in instr.get("entries", []):
                 if entry.get("entryId", "").startswith("tweet-"):
-                    t = entry["content"]["itemContent"]["tweet_results"]["result"]
-                    full = t.get("legacy", {}).get("full_text")
-                    return full
+                    tweet_result = entry["content"]["itemContent"]["tweet_results"]["result"]
+                    return tweet_result.get("legacy", {})
     except Exception:
         pass
     return None
 
-# Format tweets as plain text
 def format_tweets_as_text(tweets):
     output = []
     for tweet in tweets:
+        type_tag = "[Original]"
+        if tweet.get("text", "").strip().startswith("RT @"):
+            type_tag = "[Retweet]"
+        elif tweet.get("in_reply_to_screen_name"):
+            type_tag = "[Reply]"
+
         reply_info = "None"
         if tweet.get("in_reply_to_screen_name"):
-            reply_info = f"@{tweet['in_reply_to_screen_name']} (User ID: {tweet['in_reply_to_user_id']}, Status ID: {tweet['in_reply_to_status_id']})"
+            reply_info = f"@{tweet['in_reply_to_screen_name']}"
+            if tweet.get("in_reply_to_user_id") and tweet.get("in_reply_to_status_id"):
+                reply_info += f" (User ID: {tweet['in_reply_to_user_id']}, Status ID: {tweet['in_reply_to_status_id']})"
+
         media_info = "None"
         if tweet.get("media"):
             media_info = "\n".join([f"{m['type'].capitalize()}: {m['url']}" for m in tweet["media"]])
+
+        mentions_info = ", ".join(tweet.get("mentions", [])) if tweet.get("mentions") else "None"
+        hashtags_info = ", ".join(tweet.get("hashtags", [])) if tweet.get("hashtags") else "None"
+        urls_info = ", ".join(tweet.get("urls", [])) if tweet.get("urls") else "None"
+
         tweet_text = (
+            f"{type_tag}\n"
             f"Tweet ID: {tweet['id']}\n"
             f"Text: {tweet['text']}\n"
             f"Created At: {tweet['created_at']}\n"
             f"In Reply To: {reply_info}\n"
-            f"Media: {media_info}\n"
+        )
+
+        if tweet.get("likes"):
+            tweet_text += f"Likes: {tweet['likes']}\n"
+        if tweet.get("retweets"):
+            tweet_text += f"Retweets: {tweet['retweets']}\n"
+        if tweet.get("replies"):
+            tweet_text += f"Replies: {tweet['replies']}\n"
+        if tweet.get("bookmarks"):
+            tweet_text += f"Bookmarks: {tweet['bookmarks']}\n"
+
+        tweet_text += (
+            f"Mentions: {mentions_info}\n"
+            f"Hashtags: {hashtags_info}\n"
+            f"URLs: {urls_info}\n"
+            f"Media:\n{media_info}\n"
             f"----------------------------------------"
         )
         output.append(tweet_text)
     return "\n".join(output)
 
-# Main function to scrape tweets from a user profile or search page
 async def scrape_user_tweets(cfg):
     tweets = []
     seen_ids = set()
@@ -93,7 +117,6 @@ async def scrape_user_tweets(cfg):
             viewport={"width": 1280, "height": 800}
         )
 
-        # Load cookies with improved error handling
         try:
             with open(COOKIE_PATH) as f:
                 cookie_data = json.load(f)
@@ -111,7 +134,6 @@ async def scrape_user_tweets(cfg):
         async def handle_response(response):
             nonlocal cursor, tweets, seen_ids
             if "UserTweets" in response.url or "SearchTimeline" in response.url:
-                print(f"[DEBUG] Response for {'UserTweets' if 'UserTweets' in response.url else 'SearchTimeline'}")
                 try:
                     data = await response.json()
                     instructions = []
@@ -128,8 +150,6 @@ async def scrape_user_tweets(cfg):
                                 break
                     else:
                         instructions = data.get("data", {}).get("search_by_raw_query", {}).get("search_timeline", {}).get("timeline", {}).get("instructions", [])
-
-                    print(f"[DEBUG] Found {len(instructions)} instructions")
 
                     for item in instructions:
                         for entry in item.get("entries", []):
@@ -165,13 +185,27 @@ async def scrape_user_tweets(cfg):
                                 if cfg.type == "retweets" and not is_rt:
                                     continue
 
-                                if full_text.strip().endswith("…"):
-                                    hydrated = await hydrate_full_text(tweet_id, page)
-                                    if hydrated:
-                                        print(f"[DEBUG] Hydrated full text for {tweet_id}")
-                                        full_text = hydrated
+                                # Full hydrate if missing engagement fields
+                                if (
+                                    legacy.get("favorite_count", 0) == 0 and
+                                    legacy.get("retweet_count", 0) == 0 and
+                                    legacy.get("reply_count", 0) == 0
+                                ):
+                                    hydrated_legacy = await hydrate_full_tweet(tweet_id, page)
+                                    if hydrated_legacy:
+                                        print(f"[DEBUG] Hydrated full legacy for {tweet_id}")
+                                        legacy.update(hydrated_legacy)
 
-                                # Extract media from legacy.entities.media and extended_entities
+                                reply_screen_name = legacy.get("in_reply_to_screen_name")
+                                reply_user_id = legacy.get("in_reply_to_user_id_str")
+                                reply_status_id = legacy.get("in_reply_to_status_id_str")
+                                if not reply_screen_name and full_text.startswith("@"):
+                                    match = re.match(r"@(\w+)", full_text)
+                                    if match:
+                                        reply_screen_name = match.group(1)
+                                        reply_user_id = None
+                                        reply_status_id = None
+
                                 media = []
                                 for entities_key in ["entities", "extended_entities"]:
                                     for m in legacy.get(entities_key, {}).get("media", []):
@@ -187,14 +221,19 @@ async def scrape_user_tweets(cfg):
                                             if best_variant.get("url"):
                                                 media.append({"type": "video", "url": best_variant["url"]})
 
-                                # Prepare tweet data with only non-empty/non-zero fields
                                 tweet_data = {
                                     "id": tweet_id,
                                     "text": full_text,
                                     "created_at": created_at
                                 }
 
-                                # Numeric fields: include only if non-zero
+                                if reply_screen_name:
+                                    tweet_data["in_reply_to_screen_name"] = reply_screen_name
+                                if reply_user_id:
+                                    tweet_data["in_reply_to_user_id"] = reply_user_id
+                                if reply_status_id:
+                                    tweet_data["in_reply_to_status_id"] = reply_status_id
+
                                 if legacy.get("favorite_count", 0) > 0:
                                     tweet_data["likes"] = legacy.get("favorite_count", 0)
                                 if legacy.get("retweet_count", 0) > 0:
@@ -204,11 +243,9 @@ async def scrape_user_tweets(cfg):
                                 if legacy.get("reply_count", 0) > 0:
                                     tweet_data["replies"] = legacy.get("reply_count", 0)
 
-                                # String fields: include only if non-empty
                                 if legacy.get("source", ""):
                                     tweet_data["source"] = legacy.get("source", "")
 
-                                # List fields: include only if non-empty
                                 mentions = [m["screen_name"] for m in legacy.get("entities", {}).get("user_mentions", [])]
                                 if mentions:
                                     tweet_data["mentions"] = mentions
@@ -221,7 +258,6 @@ async def scrape_user_tweets(cfg):
                                 if hashtags:
                                     tweet_data["hashtags"] = hashtags
 
-                                # Include media only if present
                                 if media:
                                     tweet_data["media"] = media
 
@@ -232,7 +268,6 @@ async def scrape_user_tweets(cfg):
 
                             elif eid.startswith("cursor-bottom"):
                                 cursor = entry["content"]["value"]
-                                print(f"[DEBUG] Found cursor: {cursor}")
                 except Exception as e:
                     print(f"[!] JSON parse failed: {e}")
 
@@ -259,14 +294,33 @@ async def scrape_user_tweets(cfg):
             print(f"[DEBUG] Navigated to https://x.com/{cfg.username}")
             await page.wait_for_timeout(3000)
 
+        # Scroll loop with early exit
         min_load_time = 2.0
+        no_new_tweets_counter = 0
         for i in range(cfg.scrolls):
             print(f"[DEBUG] Scroll {i+1}")
-            if len(tweets) >= cfg.max or not cursor:
+
+            tweets_before_scroll = len(tweets)
+
+            if len(tweets) >= cfg.max:
+                print("[DEBUG] Reached max tweets limit.")
                 break
+
             await page.wait_for_timeout(2000)
             await page.evaluate("() => window.scrollTo(0, document.body.scrollHeight);")
             await asyncio.sleep(max(min_load_time, cfg.delay))
+
+            tweets_after_scroll = len(tweets)
+
+            if tweets_after_scroll == tweets_before_scroll:
+                no_new_tweets_counter += 1
+                print(f"[DEBUG] No new tweets after scroll ({no_new_tweets_counter}/3)")
+            else:
+                no_new_tweets_counter = 0
+
+            if no_new_tweets_counter >= 3:
+                print("[DEBUG] No new tweets after 3 attempts, exiting early.")
+                break
 
         await browser.close()
         return tweets[:cfg.max]
