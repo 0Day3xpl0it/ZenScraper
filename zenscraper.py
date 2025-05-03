@@ -120,9 +120,9 @@ async def scrape_user_tweets(cfg):
         try:
             with open(COOKIE_PATH) as f:
                 cookie_data = json.load(f)
-            cookies = cookie_data.get("cookies", cookie_data)
-            if not isinstance(cookies, list):
-                raise ValueError("Cookies must be a list")
+            cookies = cookie_data if isinstance(cookie_data, list) else cookie_data.get("cookies", [])
+            if not cookies:
+                raise ValueError("No valid cookies found")
             await context.add_cookies(cookies)
             print("[DEBUG] Cookies loaded:", [c["name"] for c in cookies])
         except Exception as e:
