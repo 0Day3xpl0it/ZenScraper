@@ -326,7 +326,7 @@ async def scrape_user_tweets(cfg):
         return tweets[:cfg.max]
 
 if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Scrape tweets from a user profile or search on X.com")
+    parser = argparse.ArgumentParser(description="Scrape tweets from a user profile or search on X.com",usage="%(prog)s --username USERNAME --type {all,tweets,retweets} [options]", formatter_class=argparse.RawTextHelpFormatter)
     parser.add_argument("--username", help="USERNAME", required=True, metavar='')
     parser.add_argument("--type", choices=["all", "tweets", "retweets"], default="all")
     parser.add_argument("--output", help="json or text output", metavar='')
