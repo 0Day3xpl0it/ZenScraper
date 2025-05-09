@@ -58,20 +58,20 @@ This command collects up to 200 original tweets from January 2025, saving the ou
 | Option          | Description                                  | Default Value       |
 | --------------- | -------------------------------------------- | ------------------- |
 | `--username`    | **(Required)** X.com username to scrape      | -                   |
-| `--type`        | Content type: `tweets`, `retweets`, or `all` | `all`               |
+| `--type`        | Content type: `tweets`, `retweets`, `bio`, or `all` | `all`               |
 | `--output`      | Output file (.json or .txt)                  | `<username>.json`   |
 | `--since-after` | Include tweets after this date (ISO 8601)    | None                |
 | `--before`      | Include tweets before this date (ISO 8601)   | None                |
 | `--scrolls`     | Number of scroll actions                     | 30                  |
 | `--max`         | Maximum tweets to retrieve                   | 50                  |
 | `--no-headless` | Display browser during scraping              | Headless by default |
-| `--delay`       | Add delay for throttling                     | 2                   | |
+| `--delay`       | Add delay for throttling                     | 2                   | 
 
 ## TODO
 
 - Add functionality to expand full text for tweets and retweets (complete - 5/8/25)
 - Add functionality to retrieve additional tweet data types (complete - 5/8/25)
-- Add functionality to grab all user bio data complete - (5/9/25)
+- Add functionality to grab all user bio datacomplete - (5/9/25)
 - Add functionality to effectively grab replies and thread them to parent conversations
 
 ## Important Notes
