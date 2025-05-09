@@ -71,7 +71,7 @@ This command collects up to 200 original tweets from January 2025, saving the ou
 
 - Add functionality to expand full text for tweets and retweets (complete - 5/8/25)
 - Add functionality to retrieve additional tweet data types (complete - 5/8/25)
-- Add functionality to grab all user bio datacomplete - (5/9/25)
+- Add functionality to grab all user bio data (complete - 5/9/25)
 - Add functionality to effectively grab replies and thread them to parent conversations
 
 ## Important Notes
