@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# ZenScraper created by 0Day3xpl0it
 
 import asyncio
 import random
@@ -111,6 +110,88 @@ def format_tweets_as_text(tweets):
         ])
         lines.append("\n".join(tweet_lines))
     return "\n".join(lines)
+
+# Formats profile data as plain text for output
+def format_profile_as_text(profile):
+    lines = [
+        "Profile Information",
+        f"Username: {profile.get('screen_name', 'N/A')}",
+        f"Name: {profile.get('name', 'N/A')}",
+        f"Bio: {profile.get('description', 'N/A')}",
+        f"Location: {profile.get('location', 'N/A')}",
+        f"Followers: {profile.get('followers_count', 'N/A')}",
+        f"Following: {profile.get('friends_count', 'N/A')}",
+        f"Created At: {profile.get('created_at', 'N/A')}",
+        f"Profile Image URL: {profile.get('profile_image_url_https', 'N/A')}",
+        f"Profile Banner URL: {profile.get('profile_banner_url', 'N/A')}",
+        "----------------------------------------"
+    ]
+    return "\n".join(lines)
+
+# Scrapes the user's profile bio and metadata
+async def scrape_user_profile(cfg):
+    profile_data = {}
+    
+    async with async_playwright() as p:
+        browser = await p.chromium.launch(headless=cfg.headless)
+        context = await browser.new_context(
+            user_agent=get_random_user_agent(),
+            locale=get_random_lang(),
+            viewport={"width": 1280, "height": 800}
+        )
+
+        try:
+            with open(COOKIE_PATH) as fh:
+                cookie_data = json.load(fh)
+            cookies = cookie_data if isinstance(cookie_data, list) else cookie_data.get("cookies", [])
+            await context.add_cookies(cookies)
+        except Exception as e:
+            print(f"[!] Cookie error: {e}. Please update x_cookies.json with valid cookies.")
+            sys.exit(1)
+
+        page = await context.new_page()
+
+        async def handle_response(response):
+            nonlocal profile_data
+            if "UserByScreenName" in response.url:
+                try:
+                    data = await response.json()
+                    user_result = data.get("data", {}).get("user", {}).get("result", {})
+                    legacy = user_result.get("legacy", {})
+                    if legacy:
+                        # Resolve t.co URLs in the description
+                        description = legacy.get("description", "")
+                        entities = legacy.get("entities", {})
+                        description_urls = entities.get("description", {}).get("urls", [])
+                        resolved_description = description
+                        for url_info in description_urls:
+                            tco_url = url_info.get("url", "")
+                            expanded_url = url_info.get("expanded_url", tco_url)
+                            if tco_url and expanded_url:
+                                resolved_description = resolved_description.replace(tco_url, expanded_url)
+                        legacy["description"] = resolved_description
+                        profile_data = legacy
+                        print(f"[+] Successfully scraped profile for {cfg.username}")
+                    else:
+                        print(f"[!] No profile data found for {cfg.username}")
+                except Exception as e:
+                    print(f"[!] Error processing profile response: {str(e)}")
+
+        page.on("response", handle_response)
+
+        # Use the UserByScreenName GraphQL endpoint to fetch the profile
+        variables = {
+            "screen_name": cfg.username,
+            "withSafetyModeUserFields": True,
+            "withSuperFollowsUserFields": True
+        }
+        q = urllib.parse.quote(json.dumps(variables))
+        url = f"https://x.com/i/api/graphql/UserByScreenName?variables={q}"
+        await page.goto(f"https://x.com/{cfg.username}", timeout=60000)
+        await asyncio.sleep(2)  # Wait for the API response
+
+        await browser.close()
+        return profile_data
 
 # Scrapes tweets or retweets from a user's timeline
 async def scrape_user_tweets(cfg):
@@ -403,7 +484,7 @@ async def scrape_user_tweets(cfg):
 # Parses arguments and runs the scraper
 if __name__ == "__main__":
     ap = argparse.ArgumentParser(
-        description="Scrape tweets / retweets from X.com",
+        description="Scrape tweets, retweets, or profile bio from X.com",
         formatter_class=argparse.RawTextHelpFormatter
     )
     ap.add_argument(
@@ -413,9 +494,9 @@ if __name__ == "__main__":
     )
     ap.add_argument(
         "--type",
-        choices=["all", "tweets", "retweets"],
+        choices=["all", "tweets", "retweets", "bio"],
         default="all",
-        help="Content type: tweets, retweets, or all (default: all)"
+        help="Content type: tweets, retweets, bio, or all (default: all)"
     )
     ap.add_argument(
         "--output",
@@ -471,18 +552,29 @@ if __name__ == "__main__":
     if args.before:
         cfg.before = datetime.fromisoformat(args.before).replace(tzinfo=timezone.utc)
 
-    result = asyncio.run(scrape_user_tweets(cfg))
+    # Decide whether to scrape tweets or profile based on --type
+    if cfg.type == "bio":
+        result = asyncio.run(scrape_user_profile(cfg))
+        # For bio, result is a single dict, but we wrap it in a list for consistency
+        result_list = [result] if result else []
+        print(f"[+] Collected profile for {cfg.username}")
+    else:
+        result_list = asyncio.run(scrape_user_tweets(cfg))
+        print(f"[+] Collected {len(result_list)} items")
+
     default_name = f"{cfg.username}.json"
 
     out_file = cfg.output or default_name
-    print(f"[+] Collected {len(result)} items")
 
     try:
         with open(out_file, "w", encoding="utf-8") as fh:
             if out_file.lower().endswith(".txt"):
-                fh.write(format_tweets_as_text(result))
+                if cfg.type == "bio":
+                    fh.write(format_profile_as_text(result))
+                else:
+                    fh.write(format_tweets_as_text(result_list))
             else:
-                json.dump(result, fh, indent=2, ensure_ascii=False)
+                json.dump(result_list, fh, indent=2, ensure_ascii=False)
         print(f"[+] Saved → {out_file}")
     except Exception as e:
         print(f"[!] Write failed: {e}")
